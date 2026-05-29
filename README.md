@@ -48,6 +48,7 @@ Requests outside these roots are rejected with an error (not forwarded to the li
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
 | `MEMSEARCH_MCP_PORT` | No | `8493` | Port for the streamable-http server |
+| `MEMSEARCH_API_TOKEN` | No | (none) | Bearer token for HTTP authentication. When set, all requests must include `Authorization: Bearer <token>`. Uses `hmac.compare_digest()` for constant-time comparison. Disabled when unset. |
 | `LOG_LEVEL` | No | `INFO` | structlog log level |
 | `MEMSEARCH_CONFIG` | No | (library default) | Path to memsearch config file |
 
@@ -103,12 +104,19 @@ Add to each agent manifest at `~/.claude/manifests/<agent>-agent.yml`:
 
 ```yaml
 modules:
-  - name: memsearch-mcp
+  memsearch-mcp:
     type: mcp_proxy
-    url: "http://127.0.0.1:8493/mcp"
-    tool_denylist:
-      - "index_memory"   # omit for developer and sysadmin
+    config:
+      url: http://127.0.0.1:8493/mcp
+      headers:
+        Authorization: "Bearer ${MEMSEARCH_API_TOKEN}"
+      tool_denylist:
+        - "index_memory"   # omit for developer and sysadmin
 ```
+
+The `headers` config injects an `Authorization` header into every upstream request via
+scoped-mcp's `mcp_proxy` module. `${MEMSEARCH_API_TOKEN}` is resolved from the agent's
+Vault-backed credentials at session start — agents never see the token value.
 
 No restart of scoped-mcp is needed — manifests are loaded fresh on each agent session start.
 
@@ -130,5 +138,10 @@ To check server health:
 
 ```bash
 pm2 status memsearch-mcp
-curl -s http://127.0.0.1:8493/mcp | head -5   # should return SSE headers or MCP handshake
+
+# Without auth (should return 401 when MEMSEARCH_API_TOKEN is set)
+curl -s http://127.0.0.1:8493/mcp
+
+# With auth
+curl -s -H "Authorization: Bearer $MEMSEARCH_API_TOKEN" http://127.0.0.1:8493/mcp | head -5
 ```
