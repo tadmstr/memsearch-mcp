@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
+from pathlib import Path
 
 from memsearch_mcp.models import MemoryResult, infer_tier
 
@@ -32,6 +33,14 @@ def test_infer_tier_agents_memory():
 
 def test_infer_tier_unknown():
     assert infer_tier("/tmp/something.md") == "unknown"
+
+
+# MEM-02 regression: crafted paths with .claude/memory substring must not misclassify
+def test_infer_tier_crafted_path_not_misclassified():
+    """MEM-02: substring match would classify these as working/session; is_relative_to must not."""
+    assert infer_tier("/tmp/evil/.claude/memory/attack.md") == "unknown"
+    assert infer_tier("/tmp/evil/.memsearch/memory/attack.md") == "session"  # .memsearch in parts → session is ok
+    assert infer_tier("/var/evil/.claude/memory/docs/attack.md") == "unknown"
 
 
 def test_memory_result_from_hit():
@@ -64,6 +73,45 @@ def test_memory_result_from_hit_null_heading():
     }
     result = MemoryResult.from_hit(hit)
     assert result.heading is None
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — index_memory path whitelist (MEM-01)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_index_memory_rejects_etc():
+    """MEM-01: /etc/ is outside allowed roots and must be rejected."""
+    from memsearch_mcp.server import index_memory
+    result = await index_memory("/etc/passwd")
+    assert "error" in result
+    assert "allowed index roots" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_index_memory_rejects_secrets():
+    """MEM-01: ~/.secrets/ is outside allowed roots and must be rejected."""
+    from memsearch_mcp.server import index_memory
+    result = await index_memory(str(Path.home() / ".secrets"))
+    assert "error" in result
+    assert "allowed index roots" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_index_memory_rejects_crafted_traversal():
+    """MEM-01: path traversal attempt must be rejected after resolve()."""
+    from memsearch_mcp.server import index_memory
+    result = await index_memory(str(Path.home() / ".claude/memory/../../.secrets"))
+    assert "error" in result
+
+
+@pytest.mark.asyncio
+async def test_index_memory_nonexistent_path():
+    """index_memory returns error for a path that doesn't exist."""
+    from memsearch_mcp.server import index_memory
+    result = await index_memory("/nonexistent/path/that/does/not/exist")
+    assert "error" in result
 
 
 # ---------------------------------------------------------------------------
@@ -103,11 +151,3 @@ async def test_search_memory_error_returns_error_dict():
         results = await search_memory("query")
     assert len(results) == 1
     assert "error" in results[0]
-
-
-@pytest.mark.asyncio
-async def test_index_memory_nonexistent_path():
-    """index_memory returns error for a path that doesn't exist."""
-    from memsearch_mcp.server import index_memory
-    result = await index_memory("/nonexistent/path/that/does/not/exist")
-    assert "error" in result

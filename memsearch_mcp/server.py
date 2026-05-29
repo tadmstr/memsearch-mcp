@@ -17,7 +17,7 @@ from fastmcp import FastMCP
 from memsearch import MemSearch
 from memsearch.config import resolve_config
 
-from .models import MemoryResult, infer_tier
+from .models import MemoryResult
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -69,6 +69,24 @@ log.info(
 )
 
 # ---------------------------------------------------------------------------
+# index_memory path whitelist
+# SECURITY[resolved]: Added _ALLOWED_INDEX_ROOTS whitelist to prevent agents
+# from triggering indexing of arbitrary paths. Uses Path.is_relative_to() for
+# strict prefix matching. Audit: 2026-05-28/memsearch-mcp-2026-05.
+# ---------------------------------------------------------------------------
+
+_ALLOWED_INDEX_ROOTS: list[Path] = [
+    Path.home() / ".claude/memory",
+    Path.home() / ".claude/projects",
+    Path("/opt/agents/memory"),
+]
+
+
+def _is_allowed_path(p: Path) -> bool:
+    return any(p == root or p.is_relative_to(root) for root in _ALLOWED_INDEX_ROOTS)
+
+
+# ---------------------------------------------------------------------------
 # MCP server
 # ---------------------------------------------------------------------------
 
@@ -110,13 +128,19 @@ async def search_memory(query: str, limit: int = 10) -> list[dict]:
 async def index_memory(path: Optional[str] = None) -> dict:
     """Trigger a memsearch index refresh.
 
-    If path is given, indexes that directory or file. Defaults to ~/.claude/memory/.
-    Returns the number of chunks indexed.
+    If path is given, indexes that directory or file within allowed roots.
+    Defaults to ~/.claude/memory/. Returns the number of chunks indexed.
+    Allowed roots: ~/.claude/memory/, ~/.claude/projects/, /opt/agents/memory/.
     """
     target = path or str(Path.home() / ".claude/memory")
     log.info("index_memory", path=target)
     try:
         p = Path(target).expanduser().resolve()
+
+        if not _is_allowed_path(p):
+            log.warning("index_memory_path_rejected", path=str(p))
+            return {"error": f"Path not in allowed index roots: {target}"}
+
         if not p.exists():
             return {"error": f"Path does not exist: {target}"}
 
