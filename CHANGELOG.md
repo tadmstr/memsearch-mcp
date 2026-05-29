@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+### Security
+
+- **Bearer token authentication** — optional `_BearerAuthMiddleware` ASGI middleware
+  activated when `MEMSEARCH_API_TOKEN` is set. Uses `hmac.compare_digest()` for
+  constant-time token comparison. Returns 401 JSON error for invalid/missing tokens.
+  Disabled by default (logs warning at startup when no token configured).
+
+### Fixed
+
+- Added `.env` and `*.env` to `.gitignore` to prevent accidental token commits.
+
 ## [0.1.0] — 2026-05-29
 
 ### Added
