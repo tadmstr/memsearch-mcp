@@ -18,6 +18,9 @@ module.exports = {
     env: {
       LOG_LEVEL: "INFO",
       MEMSEARCH_MCP_PORT: "8493",
+      // MEMSEARCH_API_TOKEN: loaded from /opt/appdata/agents/<agent>/.env at scoped-mcp session start.
+      // Set here only if running memsearch-mcp directly (outside scoped-mcp context).
+      // Value stored in Vault KV: secret/agents/shared memsearch_api_token
     },
   }]
 };

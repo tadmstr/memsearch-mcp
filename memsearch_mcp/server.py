@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import structlog
 from fastmcp import FastMCP
+from starlette.middleware import Middleware
+from starlette.requests import Request
+from starlette.responses import Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from memsearch import MemSearch
 from memsearch.config import resolve_config
@@ -84,6 +88,40 @@ _ALLOWED_INDEX_ROOTS: list[Path] = [
 
 def _is_allowed_path(p: Path) -> bool:
     return any(p == root or p.is_relative_to(root) for root in _ALLOWED_INDEX_ROOTS)
+
+
+# ---------------------------------------------------------------------------
+# Bearer token auth middleware (activated only when MEMSEARCH_API_TOKEN is set)
+# ---------------------------------------------------------------------------
+
+
+class _BearerAuthMiddleware:
+    """ASGI middleware that enforces static bearer token authentication.
+
+    Only active when MEMSEARCH_API_TOKEN is set in the environment.
+    Requests missing a valid Authorization header receive a 401 response.
+    Health/liveness paths are not exposed (all traffic goes through MCP).
+    """
+
+    def __init__(self, app: ASGIApp, token: str) -> None:
+        self._app = app
+        self._token = token
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            request = Request(scope, receive)
+            auth_header = request.headers.get("authorization", "")
+            provided = auth_header.removeprefix("Bearer ") if auth_header.lower().startswith("bearer ") else ""
+            if provided != self._token:
+                response = Response(
+                    content='{"error":"Unauthorized"}',
+                    status_code=401,
+                    media_type="application/json",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+                await response(scope, receive, send)
+                return
+        await self._app(scope, receive, send)
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +222,14 @@ async def index_memory(path: Optional[str] = None) -> dict:
 
 def main() -> None:
     port = int(os.getenv("MEMSEARCH_MCP_PORT", "8493"))
-    mcp.run(transport="streamable-http", host="127.0.0.1", port=port)
+    api_token = os.getenv("MEMSEARCH_API_TOKEN")
+    middleware: list[Any] = []
+    if api_token:
+        log.info("memsearch_mcp_bearer_auth_enabled")
+        middleware = [Middleware(_BearerAuthMiddleware, token=api_token)]
+    else:
+        log.info("memsearch_mcp_bearer_auth_disabled", reason="MEMSEARCH_API_TOKEN not set")
+    mcp.run(transport="streamable-http", host="127.0.0.1", port=port, middleware=middleware or None)
 
 
 if __name__ == "__main__":
