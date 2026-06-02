@@ -230,7 +230,10 @@ def main() -> None:
         middleware = [Middleware(_BearerAuthMiddleware, token=api_token)]
     else:
         log.info("memsearch_mcp_bearer_auth_disabled", reason="MEMSEARCH_API_TOKEN not set")
-    mcp.run(transport="streamable-http", host="127.0.0.1", port=port, middleware=middleware or None)
+    try:
+        mcp.run(transport="streamable-http", host="127.0.0.1", port=port, middleware=middleware or None)
+    except (KeyboardInterrupt, SystemExit):
+        log.info("memsearch_mcp_shutdown")
 
 
 if __name__ == "__main__":
